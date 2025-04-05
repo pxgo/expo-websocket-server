@@ -1,0 +1,10 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "paths": {
+      "expo-websocket-server": ["../src/index"],
+      "expo-websocket-server/*": ["../src/*"]
+    }
+  }
+}
