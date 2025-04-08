@@ -1,19 +1,13 @@
-import type { StyleProp, ViewStyle } from 'react-native';
-
-export type OnLoadEventPayload = {
-  url: string;
-};
-
 export type ExpoWebsocketServerModuleEvents = {
-  onChange: (params: ChangeEventPayload) => void;
-};
-
-export type ChangeEventPayload = {
-  value: string;
-};
-
-export type ExpoWebsocketServerViewProps = {
-  url: string;
-  onLoad: (event: { nativeEvent: OnLoadEventPayload }) => void;
-  style?: StyleProp<ViewStyle>;
+  onServerStart: (e: { port: number }) => void;
+  onServerStop: () => void;
+  onServerError: (e: { error: Error }) => void;
+  onClientOpen: (e: { clientId: string }) => void;
+  onClientClose: (e: {
+    clientId: string;
+    code: number;
+    reason: string;
+  }) => void;
+  onMessage: (e: { clientId: string; message: string }) => void;
+  onError: (e: { error: Error; clientId: string }) => void;
 };

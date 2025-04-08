@@ -1,50 +1,130 @@
 package expo.modules.websocketserver
 
+import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
-import java.net.URL
+import org.java_websocket.WebSocket
+import org.java_websocket.handshake.ClientHandshake
+import org.java_websocket.server.WebSocketServer
+import java.net.InetSocketAddress
+import java.util.*
 
 class ExpoWebsocketServerModule : Module() {
-  // Each module class must implement the definition function. The definition consists of components
-  // that describes the module's functionality and behavior.
-  // See https://docs.expo.dev/modules/module-api for more details about available components.
-  override fun definition() = ModuleDefinition {
-    // Sets the name of the module that JavaScript code will use to refer to the module. Takes a string as an argument.
-    // Can be inferred from module's class name, but it's recommended to set it explicitly for clarity.
-    // The module will be accessible from `requireNativeModule('ExpoWebsocketServer')` in JavaScript.
-    Name("ExpoWebsocketServer")
+    private var webSocketServer: WebSocketServer? = null
+    private val clientMap = mutableMapOf<String, WebSocket>()
 
-    // Sets constant properties on the module. Can take a dictionary or a closure that returns a dictionary.
-    Constants(
-      "PI" to Math.PI
-    )
+    override fun definition() = ModuleDefinition {
+        Name("ExpoWebsocketServer")
 
-    // Defines event names that the module can send to JavaScript.
-    Events("onChange")
+        Events(
+            "onServerStart",
+            "onServerError",
+            "onClientOpen",
+            "onClientClose",
+            "onMessage",
+            "onError",
+            "onServerStop"
+        )
 
-    // Defines a JavaScript synchronous function that runs the native code on the JavaScript thread.
-    Function("hello") {
-      "Hello world! 👋"
+        AsyncFunction("startServer") { port: Int, promise: Promise ->
+            if (webSocketServer != null) {
+                promise.reject("E_SERVER_RUNNING", "The server is already running.", null)
+                return@AsyncFunction
+            }
+
+            webSocketServer = object : WebSocketServer(InetSocketAddress(port)) {
+                override fun onStart() {
+                    sendEvent("onServerStart", mapOf("port" to port))
+                }
+
+                override fun onOpen(conn: WebSocket, handshake: ClientHandshake) {
+                    val clientId = UUID.randomUUID().toString()
+                    clientMap[clientId] = conn
+                    sendEvent("onClientOpen", mapOf("clientId" to clientId))
+                    conn.send("CONNECTION_ID:$clientId")
+                }
+
+                override fun onClose(conn: WebSocket, code: Int, reason: String, remote: Boolean) {
+                    val clientId = clientMap.entries.find { it.value == conn }?.key
+                    clientId?.let {
+                        clientMap.remove(it)
+                        sendEvent("onClientClose", mapOf(
+                            "clientId" to it,
+                            "code" to code,
+                            "reason" to reason
+                        ))
+                    }
+                }
+
+                override fun onMessage(conn: WebSocket, message: String) {
+                    val clientId = clientMap.entries.find { it.value == conn }?.key
+                    clientId?.let {
+                        sendEvent("onMessage", mapOf(
+                            "clientId" to it,
+                            "message" to message
+                        ))
+                    }
+                }
+
+                override fun onError(conn: WebSocket?, ex: Exception) {
+                    val clientId = conn?.let { findClientId(it) }
+                    sendEvent("onError", mapOf(
+                        "error" to ex.message,
+                        "clientId" to clientId
+                    ))
+                }
+            }.apply {
+                try {
+                    start()
+                    promise.resolve(true)
+                } catch (e: Exception) {
+                    webSocketServer = null
+                    promise.reject("E_SERVER_START_FAILED", "Failed to start server: ${e.message}", e)
+                }
+            }
+        }
+
+        AsyncFunction("stopServer") { promise: Promise ->
+            try {
+                webSocketServer?.stop()
+                webSocketServer = null
+                clientMap.clear()
+                sendEvent("onServerStop", emptyMap<String, Any?>())
+                promise.resolve(true)
+            } catch (e: Exception) {
+                promise.reject("E_SERVER_STOP_FAILED", "-WFailed to stop server: ${e.message}", e)
+            }
+        }
+
+        AsyncFunction("sendToClient") { clientId: String, message: String, promise: Promise ->
+            val conn = clientMap[clientId]
+            if (conn != null && conn.isOpen) {
+                try {
+                    conn.send(message)
+                    promise.resolve(true)
+                } catch (e: Exception) {
+                    promise.reject("E_SEND_FAILED", "Failed to send message: ${e.message}", e)
+                }
+            } else {
+                promise.reject("E_CLIENT_NOT_FOUND", "Client not found or not connected", null)
+            }
+        }
+
+        AsyncFunction("broadcast") { message: String, promise: Promise ->
+            try {
+                webSocketServer?.broadcast(message)
+                promise.resolve(true)
+            } catch (e: Exception) {
+                promise.reject("E_BROADCAST_FAILED", "Failed to broadcast message: ${e.message}", e)
+            }
+        }
+
+        Function("getConnectedClients") {
+            clientMap.keys.toList()
+        }
     }
 
-    // Defines a JavaScript function that always returns a Promise and whose native code
-    // is by default dispatched on the different thread than the JavaScript runtime runs on.
-    AsyncFunction("setValueAsync") { value: String ->
-      // Send an event to JavaScript.
-      sendEvent("onChange", mapOf(
-        "value" to value
-      ))
+    private fun findClientId(conn: WebSocket): String? {
+        return clientMap.entries.find { it.value == conn }?.key
     }
-
-    // Enables the module to be used as a native view. Definition components that are accepted as part of
-    // the view definition: Prop, Events.
-    View(ExpoWebsocketServerView::class) {
-      // Defines a setter for the `url` prop.
-      Prop("url") { view: ExpoWebsocketServerView, url: URL ->
-        view.webView.loadUrl(url.toString())
-      }
-      // Defines an event that the view can send to JavaScript.
-      Events("onLoad")
-    }
-  }
 }
